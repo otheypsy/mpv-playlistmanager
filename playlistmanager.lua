@@ -153,6 +153,12 @@ local settings = {
   --call ffprobe to resolve the titles of local files in the playlist (if they exist in the metadata)
   resolve_local_titles = false,
 
+    --call ffprobe to resolve the playtime duration of local files (if it exist in the metadata)
+    resolve_playtime_duration = false,
+
+    --call ffprobe to resolve a local video file's resolution (if it exist in the metadata)
+    resolve_video_resolution = false,
+
   -- timeout in seconds for url title resolving
   resolve_title_timeout = 15,
 
@@ -221,6 +227,16 @@ local settings = {
 
   --output visual feedback to OSD for tasks
   display_osd_feedback = true,
+
+    --video resolution label defaults
+    resolution_labels = [[
+    {"id": "not_found", "label": "NULL"}
+    {"id":"sd","label":"SD"},
+    {"id":"hd","label":"HD"},
+    {"id":"fhd","label":"FHD"},
+    {"id":"qhd","label":"QHD"},
+    {"id":"uhd","label":"UHD"}
+  ]]
 }
 local opts = require("mp.options")
 opts.read_options(settings, "playlistmanager", function(list) update_opts(list) end)
@@ -304,6 +320,8 @@ local cursor = 0
 local reversed_playlist_on_startup = false
 --table for saved media titles for later if we prefer them
 local title_table = {}
+--table for saved metadata for later
+local metadata_table = {}
 -- table for urls and local file paths that we have requested to be resolved to titles
 local requested_titles = {}
 
@@ -339,6 +357,17 @@ function update_opts(changelog)
     end
   end
 
+    -- parse resolution labels json
+    if changelog.resolution_labels then
+        settings.resolution_labels = utils.parse_json(settings.resolution_labels)
+
+        resolution_labels = {}
+        --create loadfiles set
+        for _, item in ipairs(settings.resolution_labels) do
+            resolution_labels[item["id"]] = item["label"]
+        end
+    end
+
   if changelog.resolve_url_titles then
     resolve_titles()
   end
@@ -346,6 +375,10 @@ function update_opts(changelog)
   if changelog.resolve_local_titles then
     resolve_titles()
   end
+
+    if changelog.resolve_playtime_duration or changelog.resolve_video_resolution then
+        resolve_metadata()
+    end
 
   if changelog.playlist_display_timeout then
     keybindstimer = mp.add_periodic_timer(settings.playlist_display_timeout, remove_keybinds)
@@ -355,7 +388,7 @@ function update_opts(changelog)
   refresh_UI()
 end
 
-update_opts({filename_replace = true, loadfiles_filetypes = true})
+update_opts({ filename_replace = true, loadfiles_filetypes = true, resolution_labels = true })
 
 ----- winapi start -----
 -- in windows system, we can use the sorting function provided by the win32 API
