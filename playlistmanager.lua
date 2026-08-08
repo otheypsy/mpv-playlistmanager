@@ -130,6 +130,9 @@ local settings = {
   --good side is cursor always following current file when going back and forth files with playlist-next/prev
   sync_cursor_on_load = true,
 
+    --remove files that are not found at path or directory
+    remove_file_not_found = true,
+
   --allow the playlist cursor to loop from end to start and vice versa
   loop_cursor = true,
 
@@ -660,7 +663,25 @@ function get_name_from_index(i, notitle)
   if string.sub(name, 1, 1) == '/' or name:match("^%a:[/\\]") then
     _, name = utils.split_path(name)
   end
-  return stripfilename(name):gsub("\\", '\\\239\187\191'):gsub("{", "\\{"):gsub("^ ", "\\h")
+    return stripfilename(name):gsub("\\", "\\\239\187\191"):gsub("{", "\\{"):gsub("^ ", "\\h")
+end
+
+--gets metadata from for playlist entry at 0-based position i
+function get_metadata_from_index(i)
+    refresh_globals()
+    if plen <= i then
+        msg.error("no index in playlist", i, "length", plen); return nil
+    end
+
+    local filename = mp.get_property("playlist/" .. i .. "/filename")
+    local metadata = metadata_table[filename]
+    if not metadata then
+        metadata = {
+            duration = "xx:xx:xx",
+            resolution = resolution_labels["not_found"] or "NA"
+        }
+    end
+    return metadata
 end
 
 function parse_header(string)
@@ -678,17 +699,19 @@ function parse_header(string)
                :gsub("%%%%", "%%")
 end
 
-function parse_filename(string, name, index)
+function parse_playlist_entry(string, name, metadata, index)
   local base = tostring(plen):len()
   local esc_name = stripfilename(name):gsub("%%", "%%%%")
   return string:gsub("%%N", "\\N")
-               :gsub("%%pos", string.format("%0"..base.."d", index+1))
+        :gsub("%%pos", string.format("%0" .. base .. "d", index + 1))
                :gsub("%%name", esc_name)
+        :gsub("%%dur", metadata["duration"])
+        :gsub("%%res", metadata["resolution"])
                -- undo name escape
                :gsub("%%%%", "%%")
 end
 
-function parse_filename_by_index(index)
+function parse_playlist_entry_by_index(index)
   local template = settings.normal_file
 
   local is_idle = mp.get_property_native('idle-active')
@@ -712,7 +735,9 @@ function parse_filename_by_index(index)
     end
   end
 
-  return parse_filename(template, get_name_from_index(index), index)
+    local name = get_name_from_index(index)
+    local metadata = get_metadata_from_index(index)
+    return parse_playlist_entry(template, name, metadata, index)
 end
 
 function is_terminal_mode()
@@ -970,7 +995,12 @@ function removefile()
   selection = nil
   if cursor==pos then mp.command("script-message unseenplaylist mark true \"playlistmanager avoid conflict when removing file\"") end
   mp.commandv("playlist-remove", cursor)
-  if cursor==plen-1 then cursor = cursor - 1 end
+
+    --remove stale metadata of removed playlist item
+    local filename = mp.get_property("playlist/" .. cursor .. "/filename")
+    metadata_table[filename] = nil
+
+    if cursor == plen - 1 then cursor = cursor - 1 end
   if plen == 1 then
     remove_keybinds()
   else
@@ -1420,7 +1450,7 @@ function save_playlist(filename)
       if not is_protocol(filename) then
         fullpath = utils.join_path(pwd, filename)
       end
-      local title = mp.get_property('playlist/'..i..'/title') or title_table[filename]
+            local title = mp.get_property("playlist/" .. i .. "/title") or title_table[filename]
       if title then
         file:write("#EXTINF:,"..title.."\n")
       end
@@ -1643,6 +1673,9 @@ mp.observe_property('playlist-count', "number", function(_, plcount)
   end
   refresh_UI()
   resolve_titles()
+
+    --resolve metadata to present in playlist if enabled
+    resolve_metadata()
 end)
 mp.observe_property('osd-dimensions', 'native', refresh_UI)
 
@@ -1681,18 +1714,54 @@ url_title_fetch_timer:kill()
 
 local_request_queue = {}
 function local_request_queue.push(item) table.insert(local_request_queue, item) end
+
 function local_request_queue.pop() return table.remove(local_request_queue, 1) end
-local local_titles_to_fetch = local_request_queue
+
+local local_ffprobe_fetch = local_request_queue
 local ongoing_local_request = false
 
--- this will only allow 1 concurrent local title resolve process
+-- this will only allow 1 concurrent local ffprobe request to process
 function local_fetching_throttler()
   if not ongoing_local_request then
-    local file = local_titles_to_fetch.pop()
-    if file then
+        local item = local_ffprobe_fetch.pop()
+        if not item then return end
+
+        if item["data_type"] == "title" then
       ongoing_local_request = true
-      resolve_ffprobe_title(file)
+            resolve_ffprobe_title(item["file"])
     end
+
+        if item["data_type"] == "metadata" then
+            ongoing_local_request = true
+            resolve_ffprobe_metadata(item["id"], item["file"])
+        end
+    end
+end
+
+function resolve_metadata()
+    if not settings.resolve_playtime_duration and not settings.resolve_video_resolution then return end
+
+    local length = mp.get_property_number("playlist-count", 0)
+    if length < 2 then return end
+
+    local added = false
+    for i = 0, length - 1, 1 do
+        local filename = mp.get_property("playlist/" .. i .. "/filename")
+        local ext = filename:match("%.([^%.]+)$")
+
+        if ext and filetype_lookup[ext:lower()] and not metadata_table[filename] then
+            added = true
+            local fetch_params = {
+                id = i,
+                file = filename,
+                data_type = "metadata"
+            }
+            local_ffprobe_fetch.push(fetch_params)
+        end
+    end
+
+    if added then
+        local_fetching_throttler()
   end
 end
 
@@ -1719,7 +1788,11 @@ function resolve_titles()
         url_titles_to_fetch.push(filename)
         added_urls = true
       elseif settings.prefer_titles == "all" and settings.resolve_local_titles then
-        local_titles_to_fetch.push(filename)
+                local fetch_params = {
+                    file = filename,
+                    data_type = "title"
+                }
+                local_ffprobe_fetch.push(fetch_params)
         added_local = true
       end
     end
@@ -1810,6 +1883,77 @@ function resolve_ffprobe_title(filename)
       end
     end
   )
+end
+
+function resolve_ffprobe_metadata(id, filename)
+    local args = { "ffprobe", "-hide_banner", "-show_entries", "stream=width,height", "-show_entries", "format=duration",
+        "-sexagesimal", "-loglevel", "error", filename }
+    local req = mp.command_native_async(
+        {
+            name = "subprocess",
+            args = args,
+            playback_only = false,
+            capture_stdout = true,
+            capture_stderr = true
+        },
+        function(success, res, err)
+            ongoing_local_request = false
+            local_fetching_throttler()
+
+            if res.killed_by_us then
+                msg.error("Request to get duration for " .. filename .. " timed out")
+                return
+            end
+
+            if res.status == 0 and success == true then
+                local _, name = utils.split_path(filename)
+                local duration = string.match(res.stdout, "duration=([^\n\r.]+)")
+                local width = string.match(res.stdout, "width=([^\n\r.]+)")
+                local height = string.match(res.stdout, "height=([^\n\r.]+)")
+                duration = duration and duration or 0
+                height = tonumber(height and height or 0)
+
+                msg.verbose("Metadata -- Resolution=[" ..
+                    width .. "x" .. height .. "] Duration=[" .. duration .. "] File=[" .. filename .. "]")
+
+                -- local width = string.match(res.stdout, "width=([^\n\r.]+)")
+                -- local resolution = string.format("%4sp", height) -- width .. "x" .. height
+
+                local resolution = resolution_labels["not_found"]
+                resolution = (0 < height and height < 720) and resolution_labels["sd"] or resolution
+                resolution = (720 <= height and height < 1080) and resolution_labels["hd"] or resolution
+                resolution = (1080 <= height and height < 1440) and resolution_labels["fhd"] or resolution
+                resolution = (1440 <= height and height < 2160) and resolution_labels["qhd"] or resolution
+                resolution = (1440 <= height) and resolution_labels["uhd"] or resolution
+
+                metadata_table[filename] = {
+                    duration = duration,
+                    resolution = resolution
+                }
+                refresh_UI()
+
+                return
+            end
+
+            if res.status ~= 0 then
+                msg.error("ffprobe failed with stderr for " .. filename .. " -- " .. res.stderr)
+                if string.find(res.stderr, "No such file or directory") ~= nil and settings.remove_file_not_found then
+                    local index = id - 1
+                    if filename == mp.get_property("playlist/" .. index .. "/filename") then
+                        mp.commandv("playlist-remove", index)
+                    end
+                end
+                return
+            end
+
+            if err then
+                msg.error("Failed to call ffprobe -- ", err)
+                return
+            end
+
+            msg.error("Failed to resolve duration for " .. file .. " Error: " .. (res.error or "unknown"))
+        end
+    )
 end
 
 --script message handler
