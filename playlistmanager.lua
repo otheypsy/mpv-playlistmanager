@@ -131,7 +131,7 @@ local settings = {
   sync_cursor_on_load = true,
 
     --remove files that are not found at path or directory
-    remove_file_not_found = true,
+  remove_file_not_found = false,
 
   --allow the playlist cursor to loop from end to start and vice versa
   loop_cursor = true,
@@ -233,7 +233,7 @@ local settings = {
 
     --video resolution label defaults
     resolution_labels = [[
-    {"id": "not_found", "label": "NULL"}
+    {"id":"not_found","label":"NULL"}
     {"id":"sd","label":"SD"},
     {"id":"hd","label":"HD"},
     {"id":"fhd","label":"FHD"},
@@ -364,11 +364,16 @@ function update_opts(changelog)
     if changelog.resolution_labels then
         settings.resolution_labels = utils.parse_json(settings.resolution_labels)
 
+    local max_length = 0
         resolution_labels = {}
         --create loadfiles set
         for _, item in ipairs(settings.resolution_labels) do
             resolution_labels[item["id"]] = item["label"]
+      if string.len(item["label"]) > max_length then
+        max_length = string.len(item["label"])
         end
+    end
+    resolution_labels["max_length"] = max_length
     end
 
   if changelog.resolve_url_titles then
@@ -681,6 +686,8 @@ function get_metadata_from_index(i)
             resolution = resolution_labels["not_found"] or "NA"
         }
     end
+  metadata["max_length"] = resolution_labels["max_length"] or ""
+  msg.verbose(utils.format_json(metadata))
     return metadata
 end
 
@@ -706,7 +713,7 @@ function parse_playlist_entry(string, name, metadata, index)
         :gsub("%%pos", string.format("%0" .. base .. "d", index + 1))
                :gsub("%%name", esc_name)
         :gsub("%%dur", metadata["duration"])
-        :gsub("%%res", metadata["resolution"])
+      :gsub("%%res", string.format("%" .. metadata["max_length"] .. "s", metadata["resolution"]))
                -- undo name escape
                :gsub("%%%%", "%%")
 end
@@ -1906,11 +1913,11 @@ function resolve_ffprobe_metadata(id, filename)
             end
 
             if res.status == 0 and success == true then
-                local _, name = utils.split_path(filename)
                 local duration = string.match(res.stdout, "duration=([^\n\r.]+)")
                 local width = string.match(res.stdout, "width=([^\n\r.]+)")
                 local height = string.match(res.stdout, "height=([^\n\r.]+)")
                 duration = duration and duration or 0
+        width = tonumber(width and width or 0)
                 height = tonumber(height and height or 0)
 
                 msg.verbose("Metadata -- Resolution=[" ..
@@ -1951,7 +1958,7 @@ function resolve_ffprobe_metadata(id, filename)
                 return
             end
 
-            msg.error("Failed to resolve duration for " .. file .. " Error: " .. (res.error or "unknown"))
+      msg.error("Failed to resolve duration for " .. filename .. " Error: " .. (res.error or "unknown"))
         end
     )
 end
