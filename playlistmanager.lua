@@ -1945,9 +1945,9 @@ function resolve_ffprobe_metadata(id, filename)
             if res.status ~= 0 then
                 msg.error("ffprobe failed with stderr for " .. filename .. " -- " .. res.stderr)
                 if string.find(res.stderr, "No such file or directory") ~= nil and settings.remove_file_not_found then
-                    local index = id - 1
-                    if filename == mp.get_property("playlist/" .. index .. "/filename") then
-                        mp.commandv("playlist-remove", index)
+                    if filename == mp.get_property("playlist/" .. id .. "/filename") then
+                        mp.commandv("playlist-remove", id)
+						msg.info("Removed " .. filename .. " from playlist")
                     end
                 end
                 return
