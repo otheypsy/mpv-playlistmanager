@@ -130,6 +130,9 @@ local settings = {
   --good side is cursor always following current file when going back and forth files with playlist-next/prev
   sync_cursor_on_load = true,
 
+    --remove files that are not found at path or directory
+    remove_file_not_found = false,
+
   --allow the playlist cursor to loop from end to start and vice versa
   loop_cursor = true,
 
@@ -152,6 +155,12 @@ local settings = {
 
   --call ffprobe to resolve the titles of local files in the playlist (if they exist in the metadata)
   resolve_local_titles = false,
+
+    --call ffprobe to resolve the playtime duration of local files (if it exist in the metadata)
+    resolve_playtime_duration = false,
+
+    --call ffprobe to resolve a local video file's resolution (if it exist in the metadata)
+    resolve_video_resolution = false,
 
   -- timeout in seconds for url title resolving
   resolve_title_timeout = 15,
@@ -221,6 +230,16 @@ local settings = {
 
   --output visual feedback to OSD for tasks
   display_osd_feedback = true,
+
+    --video resolution label defaults
+    resolution_labels = [[
+    {"id":"not_found","label":"NULL"}
+    {"id":"sd","label":"SD"},
+    {"id":"hd","label":"HD"},
+    {"id":"fhd","label":"FHD"},
+    {"id":"qhd","label":"QHD"},
+    {"id":"uhd","label":"UHD"}
+  ]]
 }
 local opts = require("mp.options")
 opts.read_options(settings, "playlistmanager", function(list) update_opts(list) end)
@@ -304,8 +323,11 @@ local cursor = 0
 local reversed_playlist_on_startup = false
 --table for saved media titles for later if we prefer them
 local title_table = {}
+--table for saved metadata for later
+local metadata_table = {}
 -- table for urls and local file paths that we have requested to be resolved to titles
 local requested_titles = {}
+local resolution_labels = {}
 
 local filetype_lookup = {}
 
