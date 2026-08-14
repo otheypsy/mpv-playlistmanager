@@ -688,7 +688,7 @@ function get_metadata_from_index(i)
     }
   end
   metadata["max_length"] = resolution_labels["max_length"] or ""
-  msg.info(utils.format_json(metadata))
+  msg.verbose(utils.format_json(metadata))
   return metadata
 end
 
