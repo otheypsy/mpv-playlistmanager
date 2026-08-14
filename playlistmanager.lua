@@ -529,6 +529,7 @@ function on_file_loaded()
   if settings.set_title_stripped then
     mp.set_property("title", settings.title_prefix..strippedname..settings.title_suffix)
   end
+  resolve_metadata()
 end
 
 function on_start_file()
@@ -1743,7 +1744,7 @@ function resolve_metadata()
   if not settings.resolve_playtime_duration and not settings.resolve_video_resolution then return end
 
   local length = mp.get_property_number("playlist-count", 0)
-  if length < 2 then return end
+  if length < 1 then return end
 
   local added = false
   for i = 0, length - 1, 1 do
