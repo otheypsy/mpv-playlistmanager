@@ -1922,11 +1922,12 @@ function resolve_ffprobe_metadata(id, filename)
         -- local resolution = string.format("%4sp", height) -- width .. "x" .. height
 
         local resolution = resolution_labels["not_found"]
-        resolution = (0 < height and height < 720) and resolution_labels["sd"] or resolution
-        resolution = (720 <= height and height < 1080) and resolution_labels["hd"] or resolution
-        resolution = (1080 <= height and height < 1440) and resolution_labels["fhd"] or resolution
-        resolution = (1440 <= height and height < 2160) and resolution_labels["qhd"] or resolution
-        resolution = (1440 <= height) and resolution_labels["uhd"] or resolution
+        if height < 720 then resolution = resolution_labels["sd"]
+        elseif height < 1080 then resolution = resolution_labels["hd"]
+        elseif height < 1440 then resolution = resolution_labels["fhd"]
+        elseif height < 2160 then resolution = resolution_labels["qhd"]
+        elseif height >= 2160 then resolution = resolution_labels["uhd"]
+        end
 
         metadata_table[filename] = {
           duration = duration,
